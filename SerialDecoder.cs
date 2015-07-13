@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
-using System.Linq;
 using LabNation.Interfaces;
 
 namespace LabNation.Decoders
@@ -9,6 +8,13 @@ namespace LabNation.Decoders
 	[Export(typeof(IDecoder))]
 	public class SerialDecoder : IDecoder
 	{
+
+
+		public const int BAUD_9600 = 9600;
+		public const int BAUD_19200 = 19200;
+		public const int BAUD_38400 = 38400;
+		public const int BAUD_57600 = 57600;
+		public const int BAUD_115200 = 115200;
 
 		public class SerialValue
 		{
@@ -72,7 +78,8 @@ namespace LabNation.Decoders
 					},
 					Parameters = new DecoderParameter[]
 					{
-						new DecoderParamaterInts("BAUD", new int[] {9600, 19200, 38400, 57600, 115200}, "baud", 9600, "Baud rate."),
+						new DecoderParamaterInts("BAUD", new int[] {BAUD_9600, BAUD_19200, BAUD_38400, BAUD_57600, BAUD_115200}, 
+							"baud", BAUD_9600, "Baud rate."),
 					}
 				};
 			}
@@ -90,27 +97,27 @@ namespace LabNation.Decoders
 			double bitLength = 0;
 			switch ((int) parameters ["BAUD"]) 
 			{
-				case 115200:
+			case BAUD_115200:
 				{
 					bitLength = 0.0000085;
 					break;
 				}
-				case 57600:
+			case BAUD_57600:
 				{
 					bitLength = 0.000017;
 					break;
 				}
-				case 38400:
+			case BAUD_38400:
 				{
 					bitLength = 0.000026;
 					break;
 				}
-				case 19200:
+			case BAUD_19200:
 				{
 					bitLength = 0.000052;
 					break;
 				}
-				case 9600:
+			case BAUD_9600:
 				{
 					bitLength = 0.000104;
 					break;
