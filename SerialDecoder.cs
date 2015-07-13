@@ -25,7 +25,6 @@ namespace LabNation.Decoders
 		public const int BAUD_115200 = 115200;
 		public const double BAUD_115200_LENGTH = 0.0000085;
 
-
 		public class SerialValue
 		{
 
