@@ -8,8 +8,6 @@ namespace LabNation.Decoders
 	[Export(typeof(IDecoder))]
 	public class SerialDecoder : IDecoder
 	{
-
-
 		public const int BAUD_9600 = 9600;
 		public const double BAUD_9600_LENGTH = 0.000104;
 
@@ -24,6 +22,10 @@ namespace LabNation.Decoders
 
 		public const int BAUD_115200 = 115200;
 		public const double BAUD_115200_LENGTH = 0.0000085;
+
+		public const String PARITY_NONE = "NONE";
+		public const String PARITY_ODD = "ODD";
+		public const String PARITY_EVEN = "EVEN";
 
 		public class SerialValue
 		{
@@ -83,12 +85,15 @@ namespace LabNation.Decoders
 					Description = "A simple decoder to decode the serial (UART) communication",
 					InputWaveformTypes = new Dictionary<string, Type>() 
 					{
-						{ "TxD", typeof(bool)}
+						{ "UART", typeof(bool)}
 					},
 					Parameters = new DecoderParameter[]
 					{
 						new DecoderParamaterInts("BAUD", new int[] {BAUD_9600, BAUD_19200, BAUD_38400, BAUD_57600, BAUD_115200}, 
 							"baud", BAUD_9600, "Baud rate."),
+						new DecoderParamaterInts("BITS", new int[] {5, 6, 7, 8}, "bits", 8, "Number of bits."),
+						new DecoderParamaterInts("STOP", new int[] {1, 2}, "stop", 1, "Number of stop bits."),
+						new DecoderParamaterStrings("PARITY", new String[] {PARITY_NONE, PARITY_EVEN, PARITY_ODD}, PARITY_NONE, "Parity type.")
 					}
 				};
 			}
@@ -97,10 +102,19 @@ namespace LabNation.Decoders
 		public DecoderOutput[] Decode(Dictionary<string, Array> inputWaveforms, Dictionary<string, object> parameters, double samplePeriod)
 		{
 			//name input waveforms for easier usage
-			bool[] TXD = (bool[])inputWaveforms["TxD"];
+			bool[] TXD = (bool[])inputWaveforms["UART"];
 
 			//initialize output structure
 			List<DecoderOutput> decoderOutputList = new List<DecoderOutput>();
+
+			// determine number of bits
+			int numberOfBits = (int) parameters ["BITS"];
+
+			// determine number of stop bits
+			int numberOfStopBits = (int) parameters ["STOP"];
+
+			// determine parity type
+			String parityType = (String) parameters ["PARITY"];
 
 			//determine bit length according to desired baud rate
 			double bitLength = 0;
@@ -139,7 +153,7 @@ namespace LabNation.Decoders
 			LinkedList<SerialValue> values = new LinkedList<SerialValue> ();
 			if (TXD != null && TXD.Length > 0) {
 
-				//find bits
+				//find bit sets
 				for (int i = 0; i < TXD.Length; i++) {
 					if (values.Count == 0 || !values.Last.Value.Value.Equals (TXD [i])) {
 						values.AddLast (new SerialValue (TXD [i], i));
@@ -148,41 +162,48 @@ namespace LabNation.Decoders
 					values.Last.Value.Increment ();
 				}
 
+				DecoderOutput frameStartDecoderOutput = null;
 				bool frameStarted = false;
-				bool[] decodedBits = new bool[8]{false, false, false, false, false, false, false, false};
+				bool[] decodedBits = new bool[8]{ false, false, false, false, false, false, false, false };
 				int decodedBitsNumber = 0;
 				int dataStartIndex = 0;
+				int dataStopIndex = 0;
+				DecoderOutput parityDecoderOutput = null;
+				bool parityStarted = false;
 
 				// decode bytes
 				foreach (SerialValue value in values) {
 					int bits = (int)Math.Round ((double)value.Count / samplesPerBit, MidpointRounding.ToEven);
 
 					if (!frameStarted) {
+						
 						// check for start bit
 						if (!value.Value) {
 							if (bits > 0) {
 								frameStarted = true;
-								decoderOutputList.Add(new DecoderOutputEvent(value.StartIndex, value.StartIndex + samplesPerBit, 
-									DecoderOutputColor.Orange, "start"));
+								frameStartDecoderOutput = new DecoderOutputEvent(value.StartIndex, value.StartIndex + samplesPerBit, 
+									DecoderOutputColor.Orange, "B");
 							}
 
+							// decode data if available
 							if (bits - 1 > 0) {
 
-								dataStartIndex = value.StartIndex + samplesPerBit;
+								dataStartIndex = dataStopIndex = value.StartIndex + samplesPerBit;
 
-								for (int i = 0; i < bits - 1; i++) {
+								for (int i = 0; i < bits - 1 && i < numberOfBits - 1; i++) {
 									decodedBits [i] = value.Value;
-								}
-
-								decodedBitsNumber = bits - 1; 
+									decodedBitsNumber = i + 1;
+								} 
 							}
 						}
 					} else {
+
+						// decode data
 						int bitCount = 0;
-						if (decodedBitsNumber + bits <= 8) {
+						if (decodedBitsNumber + bits <= numberOfBits) {
 
 							if (decodedBitsNumber == 0) {
-								dataStartIndex = value.StartIndex;
+								dataStartIndex = dataStopIndex = value.StartIndex;
 							}
 
 							for (int i = decodedBitsNumber; i < decodedBitsNumber + bits; i++) {
@@ -190,25 +211,70 @@ namespace LabNation.Decoders
 								bitCount++;
 							}
 							decodedBitsNumber += bitCount;
-						} else if (decodedBitsNumber + bits > 8) {
-							for (int i = decodedBitsNumber; i < 8; i++) {
+							dataStopIndex += bitCount * samplesPerBit;
+						} else if (decodedBitsNumber + bits > numberOfBits) {
+
+							// decode remaining data if available
+							for (int i = decodedBitsNumber; i < numberOfBits; i++) {
 								decodedBits [i] = value.Value;
 								bitCount++;
 							}
 							decodedBitsNumber += bitCount;
+							dataStopIndex += bitCount * samplesPerBit;
 
-							// check for stop bit
-							if (value.Value == true) {
-								byte decodedByte = decodeByte (decodedBits);
-								Console.WriteLine ("Decoded byte: " + String.Format("0x{0:X}", decodedByte));
-								decoderOutputList.Add(new DecoderOutputValue<byte>(dataStartIndex, value.StartIndex, 
-									DecoderOutputColor.DarkBlue, decodedByte, "data"));
-								decoderOutputList.Add(new DecoderOutputEvent(value.StartIndex, value.StartIndex + samplesPerBit, 
-									DecoderOutputColor.Orange, "stop"));
+							// omit parity check if set to NONE
+							if (parityType == PARITY_NONE) {
+								parityStarted = true;
 							}
-							frameStarted = false;
-							decodedBitsNumber = 0;
-							continue;
+
+							// check parity
+							if (!parityStarted && bits - bitCount > 0) {
+								bool parity = checkParity (decodedBits);
+
+								if ((parityType == PARITY_EVEN && value.Value == parity) ||
+								    (parityType == PARITY_ODD && value.Value == !parity)) {
+									parityStarted = true;
+									parityDecoderOutput = new DecoderOutputEvent (
+										value.StartIndex + bitCount * samplesPerBit, 
+										value.StartIndex + (bitCount + 1) * samplesPerBit, 
+										DecoderOutputColor.Green, "P");
+									bitCount++;
+								} else {
+									// if parity is wrong, then proceed to next bit set
+									frameStarted = false;
+									frameStartDecoderOutput = null;
+									parityStarted = false;
+									parityDecoderOutput = null;
+									decodedBitsNumber = 0;
+									decodedBits = new bool[8]{ false, false, false, false, false, false, false, false };
+									continue;
+								}
+							}
+
+							// check for stop bits
+							if (parityStarted && bits - bitCount > 0) {
+								if (value.Value == true && bits - bitCount >= numberOfStopBits) {
+									byte decodedByte = decodeByte (decodedBits);
+									decoderOutputList.Add (frameStartDecoderOutput);
+									decoderOutputList.Add (new DecoderOutputValue<byte> (dataStartIndex, dataStopIndex, 
+										DecoderOutputColor.DarkBlue, decodedByte, "data"));
+
+									if (parityDecoderOutput != null) {
+												decoderOutputList.Add (parityDecoderOutput);
+									}
+									decoderOutputList.Add (new DecoderOutputEvent (
+										value.StartIndex + bitCount * samplesPerBit, 
+										value.StartIndex + (bitCount + numberOfStopBits) * samplesPerBit, 
+										DecoderOutputColor.Red, "E"));
+								}
+								frameStarted = false;
+								frameStartDecoderOutput = null;
+								parityStarted = false;
+								parityDecoderOutput = null;
+								decodedBitsNumber = 0;
+								decodedBits = new bool[8]{ false, false, false, false, false, false, false, false };
+								continue;
+							} 
 						}
 					}
 				}
@@ -226,6 +292,16 @@ namespace LabNation.Decoders
 			}
 
 			return decodedByte;
+		}
+
+		// checks even parity, negate for odd parity
+		private static bool checkParity(bool[] bits) {
+			int ones = 0;
+			for (byte i = 0; i < 8; i++) {
+				if (bits[i]) ones++;
+			}
+
+			return ones % 2 != 0;
 		}
 	}
 }
