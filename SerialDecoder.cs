@@ -27,7 +27,7 @@ namespace LabNation.Decoders
 		public const String PARITY_ODD = "ODD";
 		public const String PARITY_EVEN = "EVEN";
 
-		public class SerialValue
+		public class BitSet
 		{
 
 			private bool value;
@@ -61,7 +61,7 @@ namespace LabNation.Decoders
 				}
 			}
 
-			public SerialValue(bool value, int startIndex) {
+			public BitSet(bool value, int startIndex) {
 				this.Value = value;
 				this.StartIndex = startIndex;
 			}
@@ -102,7 +102,7 @@ namespace LabNation.Decoders
 		public DecoderOutput[] Decode(Dictionary<string, Array> inputWaveforms, Dictionary<string, object> parameters, double samplePeriod)
 		{
 			//name input waveforms for easier usage
-			bool[] TXD = (bool[])inputWaveforms["UART"];
+			bool[] UART = (bool[])inputWaveforms["UART"];
 
 			//initialize output structure
 			List<DecoderOutput> decoderOutputList = new List<DecoderOutput>();
@@ -150,13 +150,13 @@ namespace LabNation.Decoders
 			int samplesPerBit = (int)(bitLength / samplePeriod);
 
 			//begin decode for sample set
-			LinkedList<SerialValue> values = new LinkedList<SerialValue> ();
-			if (TXD != null && TXD.Length > 0) {
+			LinkedList<BitSet> values = new LinkedList<BitSet> ();
+			if (UART != null && UART.Length > 0) {
 
 				//find bit sets
-				for (int i = 0; i < TXD.Length; i++) {
-					if (values.Count == 0 || !values.Last.Value.Value.Equals (TXD [i])) {
-						values.AddLast (new SerialValue (TXD [i], i));
+				for (int i = 0; i < UART.Length; i++) {
+					if (values.Count == 0 || !values.Last.Value.Value.Equals (UART [i])) {
+						values.AddLast (new BitSet (UART [i], i));
 					} 
 
 					values.Last.Value.Increment ();
@@ -165,14 +165,14 @@ namespace LabNation.Decoders
 				DecoderOutput frameStartDecoderOutput = null;
 				bool frameStarted = false;
 				bool[] decodedBits = new bool[8]{ false, false, false, false, false, false, false, false };
-				int decodedBitsNumber = 0;
+				int decodedBitsCount = 0;
 				int dataStartIndex = 0;
 				int dataStopIndex = 0;
 				DecoderOutput parityDecoderOutput = null;
-				bool parityStarted = false;
+				bool parityBitFound = false;
 
 				// decode bytes
-				foreach (SerialValue value in values) {
+				foreach (BitSet value in values) {
 					int bits = (int)Math.Round ((double)value.Count / samplesPerBit, MidpointRounding.ToEven);
 
 					if (!frameStarted) {
@@ -192,68 +192,67 @@ namespace LabNation.Decoders
 
 								for (int i = 0; i < bits - 1 && i < numberOfBits - 1; i++) {
 									decodedBits [i] = value.Value;
-									decodedBitsNumber = i + 1;
+									decodedBitsCount = i + 1;
 								} 
 							}
 						}
 					} else {
-
 						// decode data
-						int bitCount = 0;
-						if (decodedBitsNumber + bits <= numberOfBits) {
+						int processedBitCount = 0;
+						if (decodedBitsCount + bits <= numberOfBits) {
 
-							if (decodedBitsNumber == 0) {
+							if (decodedBitsCount == 0) {
 								dataStartIndex = dataStopIndex = value.StartIndex;
 							}
 
-							for (int i = decodedBitsNumber; i < decodedBitsNumber + bits; i++) {
+							for (int i = decodedBitsCount; i < decodedBitsCount + bits; i++) {
 								decodedBits [i] = value.Value;
-								bitCount++;
+								processedBitCount++;
 							}
-							decodedBitsNumber += bitCount;
-							dataStopIndex += bitCount * samplesPerBit;
-						} else if (decodedBitsNumber + bits > numberOfBits) {
+							decodedBitsCount += processedBitCount;
+							dataStopIndex += processedBitCount * samplesPerBit;
+						} else if (decodedBitsCount + bits > numberOfBits) {
 
 							// decode remaining data if available
-							for (int i = decodedBitsNumber; i < numberOfBits; i++) {
+							for (int i = decodedBitsCount; i < numberOfBits; i++) {
 								decodedBits [i] = value.Value;
-								bitCount++;
+								processedBitCount++;
 							}
-							decodedBitsNumber += bitCount;
-							dataStopIndex += bitCount * samplesPerBit;
+							decodedBitsCount += processedBitCount;
+							dataStopIndex += processedBitCount * samplesPerBit;
 
 							// omit parity check if set to NONE
 							if (parityType == PARITY_NONE) {
-								parityStarted = true;
+								parityBitFound = true;
 							}
 
 							// check parity
-							if (!parityStarted && bits - bitCount > 0) {
+							if (!parityBitFound && bits - processedBitCount > 0) {
 								bool parity = checkParity (decodedBits);
 
 								if ((parityType == PARITY_EVEN && value.Value == parity) ||
 								    (parityType == PARITY_ODD && value.Value == !parity)) {
-									parityStarted = true;
+									parityBitFound = true;
 									parityDecoderOutput = new DecoderOutputEvent (
-										value.StartIndex + bitCount * samplesPerBit, 
-										value.StartIndex + (bitCount + 1) * samplesPerBit, 
+										value.StartIndex + processedBitCount * samplesPerBit, 
+										value.StartIndex + (processedBitCount + 1) * samplesPerBit, 
 										DecoderOutputColor.Green, "P");
-									bitCount++;
+									processedBitCount++;
 								} else {
-									// if parity is wrong, then proceed to next bit set
+									// if parity is wrong, then clear context values and proceed to next bit set
 									frameStarted = false;
 									frameStartDecoderOutput = null;
-									parityStarted = false;
+									parityBitFound = false;
 									parityDecoderOutput = null;
-									decodedBitsNumber = 0;
+									decodedBitsCount = 0;
 									decodedBits = new bool[8]{ false, false, false, false, false, false, false, false };
 									continue;
 								}
 							}
 
 							// check for stop bits
-							if (parityStarted && bits - bitCount > 0) {
-								if (value.Value == true && bits - bitCount >= numberOfStopBits) {
+							if (parityBitFound && bits - processedBitCount > 0) {
+								if (value.Value == true && bits - processedBitCount >= numberOfStopBits) {
 									byte decodedByte = decodeByte (decodedBits);
 									decoderOutputList.Add (frameStartDecoderOutput);
 									decoderOutputList.Add (new DecoderOutputValue<byte> (dataStartIndex, dataStopIndex, 
@@ -263,15 +262,17 @@ namespace LabNation.Decoders
 												decoderOutputList.Add (parityDecoderOutput);
 									}
 									decoderOutputList.Add (new DecoderOutputEvent (
-										value.StartIndex + bitCount * samplesPerBit, 
-										value.StartIndex + (bitCount + numberOfStopBits) * samplesPerBit, 
+										value.StartIndex + processedBitCount * samplesPerBit, 
+										value.StartIndex + (processedBitCount + numberOfStopBits) * samplesPerBit, 
 										DecoderOutputColor.Red, "E"));
 								}
+
+								// clear context values and proceed to next bit set
 								frameStarted = false;
 								frameStartDecoderOutput = null;
-								parityStarted = false;
+								parityBitFound = false;
 								parityDecoderOutput = null;
-								decodedBitsNumber = 0;
+								decodedBitsCount = 0;
 								decodedBits = new bool[8]{ false, false, false, false, false, false, false, false };
 								continue;
 							} 
@@ -283,6 +284,7 @@ namespace LabNation.Decoders
 			return decoderOutputList.ToArray();
 		}
 
+		// decodes byte from bool array
 		private static byte decodeByte(bool[] bits) {
 			byte decodedByte = 0x00;
 			for (byte i = 0; i < 8; i++) {
