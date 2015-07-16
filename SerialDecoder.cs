@@ -8,19 +8,21 @@ namespace LabNation.Decoders
 	[Export(typeof(IDecoder))]
 	public class SerialDecoder : IDecoder
 	{
-		public const int BAUD_9600 = 9600;
+		public const String BAUD_AUTO = "AUTO";
+
+		public const String BAUD_9600 = "9600";
 		public const double BAUD_9600_LENGTH = 0.000104;
 
-		public const int BAUD_19200 = 19200;
+		public const String BAUD_19200 = "19200";
 		public const double BAUD_19200_LENGTH = 0.000052;
 
-		public const int BAUD_38400 = 38400;
+		public const String BAUD_38400 = "38400";
 		public const double BAUD_38400_LENGTH = 0.000026;
 
-		public const int BAUD_57600 = 57600;
+		public const String BAUD_57600 = "57600";
 		public const double BAUD_57600_LENGTH = 0.000017;
 
-		public const int BAUD_115200 = 115200;
+		public const String BAUD_115200 = "115200";
 		public const double BAUD_115200_LENGTH = 0.0000085;
 
 		public const String PARITY_NONE = "NONE";
@@ -89,8 +91,8 @@ namespace LabNation.Decoders
 					},
 					Parameters = new DecoderParameter[]
 					{
-						new DecoderParamaterInts("BAUD", new int[] {BAUD_9600, BAUD_19200, BAUD_38400, BAUD_57600, BAUD_115200}, 
-							"baud", BAUD_9600, "Baud rate."),
+						new DecoderParamaterStrings("BAUD", new String[] {BAUD_AUTO, BAUD_9600, BAUD_19200, BAUD_38400, BAUD_57600, BAUD_115200}, 
+							BAUD_AUTO, "Baud rate."),
 						new DecoderParamaterInts("BITS", new int[] {5, 6, 7, 8}, "bits", 8, "Number of bits."),
 						new DecoderParamaterInts("STOP", new int[] {1, 2}, "stop", 1, "Number of stop bits."),
 						new DecoderParamaterStrings("PARITY", new String[] {PARITY_NONE, PARITY_EVEN, PARITY_ODD}, PARITY_NONE, "Parity type.")
@@ -118,7 +120,9 @@ namespace LabNation.Decoders
 
 			//determine bit length according to desired baud rate
 			double bitLength = 0;
-			switch ((int) parameters ["BAUD"]) 
+			String baud = (String)parameters ["BAUD"];
+
+			switch (baud) 
 			{
 			case BAUD_115200:
 				{
@@ -147,13 +151,11 @@ namespace LabNation.Decoders
 				}
 			}
 
-			int samplesPerBit = (int)(bitLength / samplePeriod);
-
-			//begin decode for sample set
+			// begin decode for sample set
 			LinkedList<BitSet> values = new LinkedList<BitSet> ();
 			if (UART != null && UART.Length > 0) {
 
-				//find bit sets
+				// find bit sets
 				for (int i = 0; i < UART.Length; i++) {
 					if (values.Count == 0 || !values.Last.Value.Value.Equals (UART [i])) {
 						values.AddLast (new BitSet (UART [i], i));
@@ -161,6 +163,16 @@ namespace LabNation.Decoders
 
 					values.Last.Value.Increment ();
 				}
+
+				// if baud is AUTO, then try to determine the baud rate based on shortest bit
+				if (baud == BAUD_AUTO) {
+					bitLength = Double.MaxValue;
+					for (LinkedListNode<BitSet> node = values.First.Next; node != values.Last; node = node.Next) {
+						bitLength = Math.Min (bitLength, node.Value.Count * samplePeriod);
+					}
+				}
+
+				int samplesPerBit = (int)(bitLength / samplePeriod);
 
 				DecoderOutput frameStartDecoderOutput = null;
 				bool frameStarted = false;
